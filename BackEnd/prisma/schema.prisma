@@ -1,0 +1,56 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id
+  email     String   @unique
+  password  String?
+  tasks     Task[]
+  logs      ProductivityLog[]
+  sessions  StudySession[]
+  createdAt DateTime @default(now())
+}
+
+model Task {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  subject     String?
+  deadline    DateTime
+  importance  Int
+  urgency     Int
+  effort      Int
+  dependency  String?
+  status      String   @default("pending")
+
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  createdAt   DateTime @default(now())
+}
+
+model ProductivityLog {
+  id             String   @id @default(uuid())
+  date           DateTime
+  completedTasks Int
+  focusMinutes   Int
+
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+}
+
+model StudySession {
+  id        String   @id @default(uuid())
+  startTime DateTime
+  endTime   DateTime
+  energy    String
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+}
