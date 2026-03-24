@@ -5,28 +5,24 @@ const { generateScheduleAI } = require("../services/aiService");
 
 //  AI CONTROLLER - SCHEDULE
 exports.generateSchedule = async (req, res) => {
-try {
+  try {
     const userId = req.user.uid;
-    const { userInput } = req.body;
 
     const tasks = await prisma.task.findMany({
-        where: { userId },
+      where: { userId },
     });
 
-    if (!tasks.length) {
-        return res.json({ reply: "No tasks found." });
-    }
+    if (!tasks.length) return res.json([]);
 
-    const schedule = await generateScheduleAI(tasks, userInput);
+    const ai = await generateScheduleAI(tasks);
 
-    res.json({ reply: schedule });
+    res.json(ai);
 
-} catch (error) {
+  } catch (error) {
     console.error("SCHEDULE ERROR:", error);
-    res.status(500).json({ error: "Schedule failed" });
-}
+    res.status(500).json({ error: "AI failed" });
+  }
 };
-
 //  AI CONTROLLER - PRIORITIZATION & SCHEDULE
 exports.prioritizeTasks = async (req, res) => {
 try {

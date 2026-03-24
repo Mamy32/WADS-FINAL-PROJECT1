@@ -4,8 +4,8 @@ const {verifyToken} = require("../middleware/authMiddleware");
 const { prioritizeTasks } = require("../controllers/aiController");
 const { chatWithAI } = require("../controllers/aiChatController");
 const { generateSchedule } = require("../controllers/aiController");
-router.post("/chat", chatWithAI);
-router.post("/prioritize", prioritizeTasks);
-router.post("/schedule", generateSchedule);
+router.post("/chat", verifyToken, chatWithAI);
+router.post("/prioritize", verifyToken, prioritizeTasks);
+router.post("/schedule", verifyToken, generateSchedule);
 
 module.exports = router;

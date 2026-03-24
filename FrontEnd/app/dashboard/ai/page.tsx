@@ -55,7 +55,7 @@ if (lower.includes("prioriti")) {
   }
 
   let response =
-    "⚠️ AI limit reached — using smart fallback\n\n";
+    "\n\n";
 
   response += "🔥 Here’s your prioritized tasks:\n\n";
 
