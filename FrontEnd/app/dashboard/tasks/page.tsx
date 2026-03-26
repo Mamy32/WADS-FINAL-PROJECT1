@@ -77,16 +77,23 @@ const fetchTasks = async () => {
     const res = await apiFetch("/tasks");
     const data = await res.json();
 
+    // ✅ ALWAYS SAFE
+    const safeData = Array.isArray(data)
+      ? data
+      : data.tasks || data.data || [];
+
     let ai = [];
 
     try {
-      ai = await getAiPriority(); // 🔥 SAFE CALL
+      ai = await getAiPriority();
     } catch {
       console.warn("AI failed, continue without it");
     }
 
-    const formatted = data.map((t: any) => {
-      const aiTask =  Array.isArray(ai) ? ai.find((a: any) => a.id === t.id) : null; // 🔥 SAFE ACCESS
+    const formatted = safeData.map((t: any) => {
+      const aiTask = Array.isArray(ai)
+        ? ai.find((a: any) => String(a.id) === String(t.id))
+        : null;
 
       return {
         id: t.id,
@@ -114,6 +121,7 @@ const fetchTasks = async () => {
 
   } catch (err) {
     console.error("FETCH ERROR:", err);
+    setTasks([]); // 🔥 prevent crash
   }
 };
 

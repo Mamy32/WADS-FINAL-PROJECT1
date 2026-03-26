@@ -13,7 +13,6 @@ interface ScheduledTask {
   scheduledStart: string;
   scheduledEnd: string;
   priority: "high" | "medium" | "low";
-  startMinutes: number;
   date: string;
 }
 
@@ -31,105 +30,97 @@ function formatTime(seconds: number) {
 export default function StudyTimerPage() {
   const [status, setStatus] = useState<TimerStatus>("idle");
   const [elapsed, setElapsed] = useState(0);
-
+  const [manualStop, setManualStop] = useState(false);
   const [task, setTask] = useState<ScheduledTask | null>(null);
-  const [upcomingTasks, setUpcomingTasks] = useState<ScheduledTask[]>([]);
+  const [tasks, setTasks] = useState<ScheduledTask[]>([]);
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // ✅ FETCH + SYNC WITH TODAY
+  // 🔥 FETCH SCHEDULE
   useEffect(() => {
     const fetchSchedule = async () => {
-      try {
-        const res = await apiFetch("/ai/schedule", { method: "POST" });
-        const data = await res.json();
+      const res = await apiFetch("/ai/schedule", { method: "POST" });
+      const data = await res.json();
 
-        const safe = Array.isArray(data) ? data : data.schedule || [];
+      const safe = Array.isArray(data) ? data : data.schedule || [];
 
-        const today = new Date().toDateString();
+      const parsed: ScheduledTask[] = safe.map((item: any, i: number) => ({
+        id: i,
+        title: item.title,
+        subject: item.subject || "General",
+        estimatedMinutes: item.duration || 60,
+        scheduledStart: item.start,
+        scheduledEnd: item.end,
+        priority: item.priority || "medium",
+        date: item.date,
+      }));
 
-        const parsed: ScheduledTask[] = safe
-          .filter((item: any) => new Date(item.date).toDateString() === today) // ✅ ONLY TODAY
-          .map((item: any, i: number) => {
-            const [h, m] = item.start.split(":").map(Number);
-
-            return {
-              id: i,
-              title: item.title,
-              subject: item.subject || "General",
-              estimatedMinutes: item.duration || 60,
-              scheduledStart: item.start,
-              scheduledEnd: item.end,
-              priority: item.priority || "medium",
-              startMinutes: h * 60 + m,
-              date: item.date,
-            };
-          });
-
-        const now = new Date();
-        const currentMinutes = now.getHours() * 60 + now.getMinutes();
-
-        const currentTask =
-          parsed.find((t) => currentMinutes >= t.startMinutes) || parsed[0];
-
-        setTask(currentTask);
-        setUpcomingTasks(parsed.filter((t) => t.id !== currentTask?.id));
-
-        // ✅ AUTO START if within task time
-        if (currentTask && currentMinutes >= currentTask.startMinutes) {
-          setStatus("running");
-        }
-
-      } catch (err) {
-        console.error("Schedule fetch error", err);
-      }
+      setTasks(parsed);
     };
 
     fetchSchedule();
   }, []);
 
-  // ✅ AUTO SWITCH TASKS
+  // 🔥 DETECT CURRENT TASK
   useEffect(() => {
-    const interval = setInterval(() => {
-      const now = new Date();
-      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const checkCurrentTask = () => {
+    const now = new Date();
 
-      setUpcomingTasks((prev) => {
-        if (!task) return prev;
+    const currentTask = tasks.find((t) => {
+      if (!t.date) return false;
 
-        const nextTask = prev.find((t) => currentMinutes >= t.startMinutes);
+      const taskDate = new Date(t.date);
 
-        if (nextTask) {
-          setTask(nextTask);
-          setStatus("running"); // auto start new task
-          setElapsed(0);
+      if (
+        taskDate.getDate() !== now.getDate() ||
+        taskDate.getMonth() !== now.getMonth() ||
+        taskDate.getFullYear() !== now.getFullYear()
+      ) return false;
 
-          return prev.filter((t) => t.id !== nextTask.id);
-        }
+      const [sh, sm] = t.scheduledStart.split(":").map(Number);
+      const [eh, em] = t.scheduledEnd.split(":").map(Number);
 
-        return prev;
-      });
-    }, 60000);
+      const start = sh * 60 + sm;
+      const end = eh * 60 + em;
 
-    return () => clearInterval(interval);
-  }, [task]);
+      const nowMin = now.getHours() * 60 + now.getMinutes();
 
-  // ✅ TIMER CORE
+      return nowMin >= start && nowMin < end;
+    });
+
+    // 🔥 MANUAL MODE CHECK
+    if (manualStop) return;
+
+    if (currentTask) {
+      setTask(currentTask);
+      setStatus("running");
+
+      const [sh, sm] = currentTask.scheduledStart.split(":").map(Number);
+      const startMin = sh * 60 + sm;
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+
+      const seconds = (nowMin - startMin) * 60 + now.getSeconds();
+      setElapsed(seconds);
+    } else {
+      setTask(null);
+      setStatus("idle");
+      setElapsed(0);
+    }
+  };
+
+  checkCurrentTask();
+
+  const interval = setInterval(checkCurrentTask, 10000);
+
+  return () => clearInterval(interval);
+}, [tasks, manualStop]);
+  // 🔥 TIMER
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
 
-    if (status === "running") {
+    if (status === "running" && task) {
       intervalRef.current = setInterval(() => {
-        setElapsed((e) => {
-          const newTime = e + 1;
-
-          // 🔥 SAVE FOCUS TIME (dashboard sync)
-          localStorage.setItem("focusTime", String(
-            Number(localStorage.getItem("focusTime") || 0) + 1
-          ));
-
-          return newTime;
-        });
+        setElapsed((e) => e + 1);
       }, 1000);
     }
 
@@ -138,17 +129,8 @@ export default function StudyTimerPage() {
     };
   }, [status]);
 
-  const handleStart = () => setStatus("running");
-  const handlePause = () => setStatus("paused");
-  const handleResume = () => setStatus("running");
-
-  const handleStop = () => {
-    setStatus("idle");
-    setElapsed(0);
-  };
-
   if (!task) {
-    return <div className="p-10 text-center">No tasks for today</div>;
+    return <div className="p-10 text-center">No active task</div>;
   }
 
   const { hours, minutes, seconds } = formatTime(elapsed);
@@ -159,75 +141,48 @@ export default function StudyTimerPage() {
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-5xl mx-auto">
+    <div className="p-8">
+      <h1 className="text-3xl font-bold mb-6">Study Timer</h1>
 
-        <h1 className="text-4xl font-bold mb-6">Study Timer</h1>
+      <div className="bg-black text-white p-6 rounded-xl mb-6">
+        <h2>{task.title}</h2>
+        <p>{task.scheduledStart} - {task.scheduledEnd}</p>
+      </div>
 
-        {/* CURRENT TASK */}
-        <div className="bg-black text-white p-6 rounded-2xl mb-6">
-          <p className="text-sm text-gray-400">Current Task</p>
-          <h2 className="text-xl font-bold">{task.title}</h2>
-          <p className="text-gray-400 text-sm">
-            {task.scheduledStart} - {task.scheduledEnd}
-          </p>
-        </div>
+      <div className="text-center text-4xl font-mono mb-4">
+        {hours}:{minutes}:{seconds}
+      </div>
 
-        {/* TIMER */}
-        <div className="bg-white p-8 rounded-2xl text-center mb-6">
-          <div className="text-5xl font-mono mb-4">
-            {hours}:{minutes}:{seconds}
-          </div>
+      <p className="text-center">{progress}% progress</p>
 
-          <p className="text-sm text-gray-400 mb-4">
-            {progress}% progress
-          </p>
+      <div className="flex justify-center gap-3 mt-4">
+        <button
+  onClick={() => {
+    setStatus("running");
+    setManualStop(false); // 🔥 allow auto again
+  }}
+  className="bg-green-500 px-4 py-2 text-white rounded"
+>
+  Start
+</button>
 
-          <div className="flex justify-center gap-3">
-            {status === "idle" && (
-              <button onClick={handleStart} className="bg-teal-600 text-white px-6 py-2 rounded-xl">
-                Start
-              </button>
-            )}
+<button
+  onClick={() => setStatus("paused")}
+  className="bg-yellow-500 px-4 py-2 text-white rounded"
+>
+  Pause
+</button>
 
-            {status === "running" && (
-              <>
-                <button onClick={handlePause} className="bg-yellow-500 text-white px-4 py-2 rounded-xl">
-                  Pause
-                </button>
-                <button onClick={handleStop} className="bg-red-500 text-white px-4 py-2 rounded-xl">
-                  Stop
-                </button>
-              </>
-            )}
-
-            {status === "paused" && (
-              <>
-                <button onClick={handleResume} className="bg-teal-600 text-white px-4 py-2 rounded-xl">
-                  Resume
-                </button>
-                <button onClick={handleStop} className="bg-red-500 text-white px-4 py-2 rounded-xl">
-                  Stop
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* UPCOMING */}
-        <div className="bg-white p-6 rounded-2xl">
-          <h3 className="font-bold mb-4">Upcoming</h3>
-
-          {upcomingTasks.map((t) => (
-            <div key={t.id} className="border-b py-2">
-              <p className="font-semibold">{t.title}</p>
-              <p className="text-xs text-gray-400">
-                {t.scheduledStart} · {t.estimatedMinutes} min
-              </p>
-            </div>
-          ))}
-        </div>
-
+<button
+  onClick={() => {
+    setStatus("idle");
+    setManualStop(true); // 🔥 block auto restart
+    setElapsed(0); // 🔥 reset timer
+  }}
+  className="bg-red-500 px-4 py-2 text-white rounded"
+>
+  Stop
+</button>
       </div>
     </div>
   );

@@ -44,34 +44,40 @@ export default function DashboardPage() {
   /* =========================
     FETCH TASKS
   ========================= */
-  const fetchTasks = async () => {
-    try {
-      const res = await apiFetch("/tasks");
-      const data = await res.json();
+const fetchTasks = async () => {
+  try {
+    const res = await apiFetch("/tasks");
+    const data = await res.json();
 
-      const formatted: Task[] = data.map((t: any) => ({
-        id: t.id,
-        title: t.title,
-        subject: t.subject || "General",
-        duration: "60 min",
-        priority:
-          t.importance === 3
-            ? "high"
-            : t.importance === 2
-            ? "medium"
-            : "low",
-        date: new Date(t.deadline).toLocaleDateString("fr-FR", {
-          day: "numeric",
-          month: "short",
-        }),
-      }));
+    // ✅ FIX HERE
+    const safeData = Array.isArray(data)
+      ? data
+      : data.tasks || data.data || [];
 
-      setTasks(formatted);
-    } catch (err) {
-      console.error("FETCH TASK ERROR:", err);
-      setTasks([]); // 🔥 prevent crash
-    }
-  };
+    const formatted: Task[] = safeData.map((t: any) => ({
+      id: t.id,
+      title: t.title,
+      subject: t.subject || "General",
+      duration: "60 min",
+      priority:
+        t.importance === 3
+          ? "high"
+          : t.importance === 2
+          ? "medium"
+          : "low",
+      date: new Date(t.deadline).toLocaleDateString("fr-FR", {
+        day: "numeric",
+        month: "short",
+      }),
+    }));
+
+    setTasks(formatted);
+
+  } catch (err) {
+    console.error("FETCH TASK ERROR:", err);
+    setTasks([]);
+  }
+};
 
   /* =========================
      FETCH AI PRIORITY

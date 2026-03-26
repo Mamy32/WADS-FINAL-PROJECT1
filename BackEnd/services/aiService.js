@@ -1,53 +1,132 @@
-const {
-  GoogleGenerativeAI
-} = require("@google/generative-ai");
+const fetch = (...args) =>
+  import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+async function callOpenRouter(prompt) {
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "stepfun/step-3.5-flash:free",
+        temperature: 0.2,
+        messages: [
+          {
+            role: "system",
+            content: "You are a strict API. Return ONLY valid JSON. No explanation.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      }),
+    });
 
+    const data = await response.json();
+
+    // 🔥 HANDLE API ERROR
+    if (!response.ok) {
+      console.error("OPENROUTER ERROR:", data);
+      return [];
+    }
+
+    let text = data?.choices?.[0]?.message?.content;
+
+    if (!text) {
+      console.error("EMPTY AI RESPONSE:", data);
+      return [];
+    }
+
+    // 🔥 CLEAN JSON
+    const start = text.indexOf("[");
+    const end = text.lastIndexOf("]") + 1;
+
+    if (start === -1 || end === -1) {
+      console.error("INVALID JSON FORMAT:", text);
+      return [];
+    }
+
+    const clean = text.slice(start, end);
+
+    try {
+      return JSON.parse(clean); // ✅ ONLY PARSE ONCE
+    } catch (err) {
+      console.error("JSON PARSE ERROR:", clean);
+      return [];
+    }
+
+  } catch (err) {
+    console.error("AI ERROR:", err);
+    return [];
+  }
+}
 /* =========================================================
    PRIORITIZE TASKS (REAL AI ONLY — NO FALLBACK)
 ========================================================= */
 exports.prioritizeTasksAI = async (tasks) => {
   try {
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash-lite", // ✅ safer than 2.5 (less quota issues)
-    });
+    if (!tasks || tasks.length === 0) return [];
+
+    // 🔥 CLEAN INPUT (ONLY IMPORTANT FIELDS)
+    const cleanTasks = tasks.map((t) => ({
+      id: t.id,
+      title: t.title,
+      importance: t.importance,
+      urgency: t.urgency,
+      effort: t.effort,
+      deadline: t.deadline,
+    }));
 
     const prompt = `
 You are an AI that prioritizes student tasks.
 
-Rules:
-- Higher importance = higher priority
-- Closer deadline = higher priority
-- Higher effort = lower priority
-- Be realistic and balanced
+SCORING RULES:
+- Importance (1–3): higher = more important
+- Urgency (1–3): higher = more urgent
+- Effort: lower effort = higher priority
+- Earlier deadline = higher priority
 
-Return ONLY valid JSON (no explanation):
+INSTRUCTIONS:
+- Give each task a score from 0 to 100
+- Higher score = higher priority
+- Be consistent and realistic
+
+OUTPUT RULES:
+- Return ONLY valid JSON
+- No explanation, no text
+- Format EXACTLY like this:
+
 [
-  { "id": "task_id", "score": number }
+  { "id": number, "score": number }
 ]
 
 Tasks:
-${JSON.stringify(tasks)}
+${JSON.stringify(cleanTasks)}
 `;
 
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    const ai = await callOpenRouter(prompt);
 
-    // 🔥 CLEAN RESPONSE
-    const cleaned = text.replace(/```json|```/g, "").trim();
-
-    const parsed = JSON.parse(cleaned);
-
-    if (!Array.isArray(parsed)) {
-      throw new Error("Invalid AI response format");
+    if (!Array.isArray(ai)) {
+      console.error("INVALID AI RESPONSE:", ai);
+      return [];
     }
 
-    return parsed;
+    // 🔥 SORT BY SCORE (HIGH → LOW)
+    const sorted = ai
+      .map((item) => ({
+        id: item.id,
+        score: Number(item.score) || 0,
+      }))
+      .sort((a, b) => b.score - a.score);
 
-  } catch (error) {
-    console.error("AI SERVICE ERROR (PRIORITY):", error);
-    throw new Error("AI failed");
+    return sorted;
+
+  } catch (err) {
+    console.error("PRIORITY AI ERROR:", err);
+    return [];
   }
 };
 
@@ -57,46 +136,86 @@ ${JSON.stringify(tasks)}
 ========================================================= */
 exports.generateScheduleAI = async (tasks) => {
   try {
-    let currentTime = 18 * 60; // start at 6:00 PM
+    if (!tasks || tasks.length === 0) return [];
 
-    const scheduled = tasks.map((task, index) => {
-      const duration = task.duration || 60;
+    // 🔥 STEP 1 — GET PRIORITY SCORES
+    const aiPriority = await exports.prioritizeTasksAI(tasks);
 
-      const startHour = Math.floor(currentTime / 60);
-      const startMin = currentTime % 60;
-
-      const endTime = currentTime + duration;
-      const endHour = Math.floor(endTime / 60);
-      const endMin = endTime % 60;
-
-      currentTime = endTime;
+    // 🔥 STEP 2 — MERGE SCORE INTO TASKS
+    const enrichedTasks = tasks.map((t) => {
+      const ai = aiPriority.find((a) => String(a.id) === String(t.id));
 
       return {
-        title: task.title,
-        subject: task.subject || "General",
-        start: `${String(startHour).padStart(2, "0")}:${String(startMin).padStart(2, "0")}`,
-        end: `${String(endHour).padStart(2, "0")}:${String(endMin).padStart(2, "0")}`,
-        duration,
-        priority: task.priority || "medium",
-
-        date: new Date(
-            today.getFullYear(),
-            today.getMonth(),
-            today.getDate() + index
-        ).toISOString(),
+        ...t,
+        score: ai?.score || 0,
       };
     });
 
-    return scheduled;
-  } catch (err) {
-    console.error("Scheduler fallback:", err);
+    // 🔥 STEP 3 — SORT BY PRIORITY
+    enrichedTasks.sort((a, b) => b.score - a.score);
 
-    return tasks.map((t, i) => ({
-      title: t.title,
-      start: "18:00",
-      end: "19:00",
-      subject: t.subject || "General",
-      priority: "medium",
-    }));
+    // 🔥 STEP 4 — BUILD REAL SCHEDULE
+    const schedule = [];
+
+    let current = new Date();
+
+    // normalize time
+    current.setSeconds(0);
+    current.setMilliseconds(0);
+
+    // OPTIONAL: start at next full hour
+    current.setMinutes(0);
+    current.setHours(current.getHours() + 1);
+
+    for (let i = 0; i < enrichedTasks.length; i++) {
+      const task = enrichedTasks[i];
+
+      const duration = task.duration || 60;
+
+      const start = new Date(current);
+      const end = new Date(current.getTime() + duration * 60000);
+
+      schedule.push({
+        id: task.id, // 🔥 IMPORTANT (for tracking)
+        title: task.title,
+        subject: task.subject || "General",
+        start: start.toTimeString().slice(0, 5),
+        end: end.toTimeString().slice(0, 5),
+        duration,
+        priority:
+          task.importance === 3
+          ? "high"
+          : task.importance === 2
+          ? "medium"
+          : "low",
+        date: start.toISOString(), // ✅ REAL DATE
+      });
+
+      // move forward
+      current = end;
+
+      // 🔥 BREAK LOGIC
+      if ((i + 1) % 2 === 0) {
+        current = new Date(current.getTime() + 10 * 60000);
+      }
+
+      // 🔥 DAY OVERFLOW FIX (CRITICAL)
+      if (current.getHours() >= 23) {
+        current = new Date(current);
+        current.setDate(current.getDate() + 1);
+        current.setHours(9, 0, 0, 0); // next day 09:00
+      }
+    }
+
+    // 🔥 REMOVE DUPLICATES (SAFETY)
+    const unique = Array.from(
+      new Map(schedule.map((t) => [t.id, t])).values()
+    );
+
+    return unique;
+
+  } catch (err) {
+    console.error("AI SCHEDULE ERROR:", err);
+    return [];
   }
 };
