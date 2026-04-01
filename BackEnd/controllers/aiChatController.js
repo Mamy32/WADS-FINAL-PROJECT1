@@ -14,7 +14,7 @@ exports.chatWithAI = async (req, res) => {
         "X-Title": "Study Planner",
       },
       body: JSON.stringify({
-        model: "stepfun/step-3.5-flash:free", // 🔥 FIXED
+        model: "liquid/lfm-2.5-1.2b-instruct:free", // 🔥 FIXED
         temperature: 0.7,
         messages: [
           { role: "system", content: "You are a helpful assistant." },

@@ -7,10 +7,8 @@ exports.createTask = async (req, res) => {
   try {
     const { title, description, subject, deadline, importance, urgency, effort } = req.body;
 
-    // user from Firebase token
     const userId = req.user.uid;
 
-    // ensure user exists
     await prisma.user.upsert({
       where: { id: userId },
       update: {},
@@ -21,16 +19,23 @@ exports.createTask = async (req, res) => {
       }
     });
 
+    // 🔥 SAFE DEADLINE
+    let parsedDeadline = null;
+    if (deadline && !isNaN(new Date(deadline))) {
+      parsedDeadline = new Date(deadline);
+    }
+
     const task = await prisma.task.create({
       data: {
         title,
         description,
         subject,
-        deadline: new Date(deadline) ? new Date(deadline).toISOString() : null,
+        deadline: parsedDeadline, // ✅ FIXED
         importance,
         urgency,
         effort,
-        userId
+        userId,
+        status: "pending" // 🔥 always set default
       }
     });
 
@@ -41,7 +46,6 @@ exports.createTask = async (req, res) => {
     res.status(500).json({ error: "Task creation failed" });
   }
 };
-
 
 /* =========================
   GET ALL TASKS (USER)
@@ -91,17 +95,16 @@ exports.getTaskById = async (req, res) => {
   }
 };
 
-
+//* =========================
+//  UPDATE TASK
+//========================= */
 exports.updateTask = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.uid;
 
     const existing = await prisma.task.findFirst({
-      where: {
-        id: id,
-        userId
-      }
+      where: { id, userId }
     });
 
     if (!existing) {
@@ -119,20 +122,28 @@ exports.updateTask = async (req, res) => {
       status
     } = req.body;
 
-    const updated = await prisma.task.update({
-      where: { id: id },
-      data: {
-        title,
-        description,
-        subject,
-        deadline: deadline ? new Date(deadline).toISOString() : null, 
-        importance,
-        urgency,
-        effort,
-        status
-      }
-    });
+    // 🔥 BUILD SAFE UPDATE OBJECT
+    const data = {};
 
+    if (title !== undefined) data.title = title;
+    if (description !== undefined) data.description = description;
+    if (subject !== undefined) data.subject = subject;
+    if (importance !== undefined) data.importance = importance;
+    if (urgency !== undefined) data.urgency = urgency;
+    if (effort !== undefined) data.effort = effort;
+    if (status !== undefined) data.status = status;
+
+    // 🔥 SAFE DEADLINE UPDATE
+    if (deadline !== undefined) {
+      if (deadline && !isNaN(new Date(deadline))) {
+        data.deadline = new Date(deadline);
+      }
+    }
+
+    const updated = await prisma.task.update({
+      where: { id },
+      data
+    });
 
     res.json(updated);
 

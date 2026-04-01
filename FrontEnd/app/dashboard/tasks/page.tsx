@@ -3,8 +3,6 @@
 import { useState, useEffect } from "react";
 import { apiFetch } from "@/lib/api";
 import { useRouter } from "next/navigation";
-import { auth } from "@/lib/firebase";
-import { onAuthStateChanged } from "firebase/auth";
 
 type Priority = "high" | "medium" | "low";
 type Status = "pending" | "completed";
@@ -18,23 +16,69 @@ interface Task {
   priority: Priority;
   dueDate: string;
   status: Status;
-  aiScore?: number; // 🔥 ADD THIS
+  aiScore?: number;
+  isOverdue?: boolean;
 }
 
-const priorityConfig: Record<Priority, { bar: string; badge: string; dot: string }> = {
-  high:   { bar: "bg-red-400",   badge: "bg-red-50 text-red-500", dot: "bg-red-400" },
-  medium: { bar: "bg-amber-400", badge: "bg-amber-50 text-amber-600", dot: "bg-amber-400" },
-  low:    { bar: "bg-slate-300", badge: "bg-slate-50 text-slate-500", dot: "bg-slate-300" },
+const priorityConfig: Record<
+  Priority,
+  { bar: string; badge: string; dot: string }
+> = {
+  high: {
+    bar: "bg-red-400",
+    badge: "bg-red-50 text-red-500",
+    dot: "bg-red-400",
+  },
+  medium: {
+    bar: "bg-amber-400",
+    badge: "bg-amber-50 text-amber-600",
+    dot: "bg-amber-400",
+  },
+  low: {
+    bar: "bg-slate-300",
+    badge: "bg-slate-50 text-slate-500",
+    dot: "bg-slate-300",
+  },
 };
 
-export default function TasksPage() {
+// 🔥 SMART DATE FORMAT
+function formatDateSmart(dateString: string) {
+  if (!dateString) return { text: "", isOverdue: false };
 
+  const date = new Date(dateString);
+  const today = new Date();
+
+  today.setHours(0, 0, 0, 0);
+
+  const compare = new Date(date);
+  compare.setHours(0, 0, 0, 0);
+
+  const isSameDay = compare.getTime() === today.getTime();
+
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+
+  const isTomorrow = compare.getTime() === tomorrow.getTime();
+
+  const isOverdue = compare < today;
+
+  if (isSameDay) return { text: "Today", isOverdue };
+  if (isTomorrow) return { text: "Tomorrow", isOverdue };
+
+  const day = date.getDate();
+  const month = date.toLocaleString("en-US", { month: "short" });
+
+  return { text: `${day} ${month}`, isOverdue };
+}
+
+export default function TasksPage() {
   const router = useRouter();
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [filter, setFilter] = useState<Filter>("All");
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
+  const [loading, setLoading] = useState(true); // ✅ NEW
 
   const [newTask, setNewTask] = useState({
     title: "",
@@ -44,193 +88,144 @@ export default function TasksPage() {
     dueDate: "",
   });
 
-/// =========================
-/// FETCH AI PRIORITY
-/// =========================
-const getAiPriority = async () => {
-  try {
-    const res = await apiFetch("/ai/prioritize", {
-      method: "POST",
-    });
-
-    const data = await res.json();
-
-    // 🔥 FIX HERE
-    if (!Array.isArray(data)) {
-      console.warn("AI returned non-array:", data);
+  // 🔥 AI PRIORITY
+  const getAiPriority = async () => {
+    try {
+      const res = await apiFetch("/ai/prioritize", { method: "POST" });
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    } catch {
       return [];
     }
-
-    return data;
-
-  } catch (err) {
-    console.error("AI ERROR:", err);
-    return [];
-  }
-};
-
-  /* =========================
-    FETCH TASKS
-  ========================= */
-const fetchTasks = async () => {
-  try {
-    const res = await apiFetch("/tasks");
-    const data = await res.json();
-
-    // ✅ ALWAYS SAFE
-    const safeData = Array.isArray(data)
-      ? data
-      : data.tasks || data.data || [];
-
-    let ai = [];
-
-    try {
-      ai = await getAiPriority();
-    } catch {
-      console.warn("AI failed, continue without it");
-    }
-
-    const formatted = safeData.map((t: any) => {
-      const aiTask = Array.isArray(ai)
-        ? ai.find((a: any) => String(a.id) === String(t.id))
-        : null;
-
-      return {
-        id: t.id,
-        title: t.title,
-        description: t.description,
-        subject: t.subject || "General",
-
-        priority:
-          t.importance === 3
-            ? "high"
-            : t.importance === 2
-            ? "medium"
-            : "low",
-
-        dueDate: t.deadline,
-        status: t.status || "pending",
-
-        aiScore: aiTask?.score || 0,
-      };
-    });
-
-    formatted.sort((a: Task, b: Task) => (b.aiScore || 0) - (a.aiScore || 0));
-
-    setTasks(formatted);
-
-  } catch (err) {
-    console.error("FETCH ERROR:", err);
-    setTasks([]); // 🔥 prevent crash
-  }
-};
-
-  /* =========================
-    AUTH GUARD
-  ========================= */
-useEffect(() => {
-  fetchTasks(); // fetch tasks on mount
-}, []);
-
-  /* =========================
-    ADD TASK
-  ========================= */
-const addTask = async () => {
-  if (!newTask.title.trim()) return;
-
-  const res = await apiFetch("/tasks", {
-    method: "POST",
-    body: JSON.stringify({
-      title: newTask.title,
-      description: newTask.description,
-      subject: newTask.subject,
-      deadline: newTask.dueDate, // ✅ correct
-      importance:
-        newTask.priority === "high"
-          ? 3
-          : newTask.priority === "medium"
-          ? 2
-          : 1,
-      urgency: 2,
-      effort: 1,
-    }),
-  });
-
-  console.log("ADD STATUS:", res.status);
-
-  setNewTask({
-    title: "",
-    description: "",
-    subject: "",
-    priority: "medium",
-    dueDate: "",
-  });
-
-  setShowModal(false);
-  fetchTasks();
-};
-
-  /* =========================
-    DELETE TASK
-  ========================= */
-const deleteTask = async (id: string) => {
-  const confirmDelete = window.confirm("Delete this task?");
-  if (!confirmDelete) return;
-
-  const res = await apiFetch(`/tasks/${id}`, {
-    method: "DELETE",
-  });
-
-  console.log("DELETE STATUS:", res.status);
-
-  fetchTasks();
-};
-
-  /* =========================
-    TOGGLE STATUS
-  ========================= */
-const toggleStatus = async (id: string) => {
-  const task = tasks.find((t) => t.id === id);
-  if (!task) return;
-
-  const newStatus =
-    task.status === "pending" ? "completed" : "pending";
-
-  try {
-    const res = await apiFetch(`/tasks/${id}`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json", // 🔥 IMPORTANT
-      },
-      body: JSON.stringify({ status: newStatus }),
-    });
-
-    const data = await res.json();
-    console.log("UPDATED TASK:", data);
-
-    // 🔥 INSTANT UI UPDATE (better UX)
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === id ? { ...t, status: newStatus } : t
-      )
-    );
-
-  } catch (err) {
-    console.error("TOGGLE ERROR:", err);
-  }
-};
-
-  /* =========================
-    FILTERING
-  ========================= */
-  const counts = {
-    All: tasks.length,
-    Pending: tasks.filter(t => t.status === "pending").length,
-    Completed: tasks.filter(t => t.status === "completed").length,
   };
 
+  // 🔥 FETCH TASKS
+  const fetchTasks = async () => {
+    try {
+      setLoading(true);
+
+      const res = await apiFetch("/tasks");
+      const data = await res.json();
+
+      const safeData = Array.isArray(data)
+        ? data
+        : data.tasks || data.data || [];
+
+      let ai = [];
+      try {
+        ai = await getAiPriority();
+      } catch {}
+
+      const formatted = safeData.map((t: any) => {
+        const aiTask = ai.find((a: any) => String(a.id) === String(t.id));
+
+        const dateInfo = formatDateSmart(t.deadline);
+
+        return {
+          id: String(t.id), // ✅ FIX TYPE
+          title: t.title,
+          description: t.description,
+          subject: t.subject || "General",
+
+          priority:
+            t.importance === 3
+              ? "high"
+              : t.importance === 2
+              ? "medium"
+              : "low",
+
+          dueDate: dateInfo.text,
+          isOverdue: dateInfo.isOverdue,
+
+          status: t.status || "pending",
+          aiScore: aiTask?.score || 0,
+        };
+      });
+
+      formatted.sort((a: Task, b: Task) => (b.aiScore || 0) - (a.aiScore || 0));
+
+      setTasks(formatted);
+    } catch {
+      setTasks([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTasks();
+  }, []);
+
+  // 🔥 ADD TASK
+  const addTask = async () => {
+    if (!newTask.title.trim()) return;
+
+    await apiFetch("/tasks", {
+      method: "POST",
+      body: JSON.stringify({
+        title: newTask.title,
+        description: newTask.description,
+        subject: newTask.subject,
+        deadline: newTask.dueDate,
+        importance:
+          newTask.priority === "high"
+            ? 3
+            : newTask.priority === "medium"
+            ? 2
+            : 1,
+        urgency: 2,
+        effort: 1,
+      }),
+    });
+
+    setNewTask({
+      title: "",
+      description: "",
+      subject: "",
+      priority: "medium",
+      dueDate: "",
+    });
+
+    setShowModal(false);
+    fetchTasks();
+  };
+
+  // 🔥 DELETE
+  const deleteTask = async (id: string) => {
+    if (!confirm("Delete this task?")) return;
+    await apiFetch(`/tasks/${id}`, { method: "DELETE" });
+    fetchTasks();
+  };
+
+  // 🔥 FIXED TOGGLE STATUS
+  const toggleStatus = async (id: string) => {
+    try {
+      const task = tasks.find((t) => String(t.id) === String(id));
+      if (!task) return;
+
+      const newStatus =
+        task.status === "completed" ? "pending" : "completed";
+
+      await apiFetch(`/tasks/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      setTasks((prev) =>
+        prev.map((t) =>
+          String(t.id) === String(id)
+            ? { ...t, status: newStatus }
+            : t
+        )
+      );
+    } catch (err) {
+      console.error("UPDATE STATUS ERROR:", err);
+    }
+  };
+
+  // 🔥 FILTER
   const filtered = tasks.filter((t) => {
-    const matchesFilter =
+    const matchFilter =
       filter === "All" ||
       (filter === "Pending"
         ? t.status === "pending"
@@ -238,12 +233,18 @@ const toggleStatus = async (id: string) => {
 
     const q = search.toLowerCase();
 
-    return matchesFilter && (
-      t.title.toLowerCase().includes(q) ||
-      t.subject.toLowerCase().includes(q) ||
-      t.description.toLowerCase().includes(q)
+    return (
+      matchFilter &&
+      (t.title.toLowerCase().includes(q) ||
+        t.subject.toLowerCase().includes(q) ||
+        t.description.toLowerCase().includes(q))
     );
   });
+  const counts = {
+    All: tasks.length,
+    Pending: tasks.filter((t) => t.status === "pending").length,
+    Completed: tasks.filter((t) => t.status === "completed").length,
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -384,7 +385,13 @@ const toggleStatus = async (id: string) => {
                   </span>
 
                   {/* Date */}
-                  <span className="text-sm text-gray-400 whitespace-nowrap font-medium w-14 text-right">{task.dueDate}</span>
+                  <span
+  className={`text-sm whitespace-nowrap font-medium w-16 text-right ${
+    task.isOverdue ? "text-red-500 font-semibold" : "text-gray-400"
+  }`}
+>
+  {task.dueDate}
+</span>
 
                   {/* Edit */}
                     <button

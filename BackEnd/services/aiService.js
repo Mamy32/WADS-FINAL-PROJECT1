@@ -10,7 +10,7 @@ async function callOpenRouter(prompt) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "stepfun/step-3.5-flash:free",
+        model: "liquid/lfm-2.5-1.2b-instruct:free",
         temperature: 0.2,
         messages: [
           {

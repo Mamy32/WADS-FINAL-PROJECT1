@@ -28,93 +28,138 @@ function formatTime(seconds: number) {
 }
 
 export default function StudyTimerPage() {
-  const [status, setStatus] = useState<TimerStatus>("idle");
+   const [status, setStatus] = useState<TimerStatus>("idle");
   const [elapsed, setElapsed] = useState(0);
   const [manualStop, setManualStop] = useState(false);
   const [task, setTask] = useState<ScheduledTask | null>(null);
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastTaskId = useRef<number | null>(null);
+
+  // 🔥 LOAD SAVED STATE
+  useEffect(() => {
+    const saved = localStorage.getItem("timer_state");
+
+    if (saved) {
+      const data = JSON.parse(saved);
+
+      setTask(data.task);
+      setElapsed(data.elapsed);
+      setStatus(data.status);
+      setManualStop(data.manualStop);
+    }
+  }, []);
+
+  // 🔥 SAVE STATE
+  useEffect(() => {
+    if (!task) return;
+
+    localStorage.setItem(
+      "timer_state",
+      JSON.stringify({
+        task,
+        elapsed,
+        status,
+        manualStop,
+      })
+    );
+  }, [task, elapsed, status, manualStop]);
 
   // 🔥 FETCH SCHEDULE
   useEffect(() => {
     const fetchSchedule = async () => {
-      const res = await apiFetch("/ai/schedule", { method: "POST" });
-      const data = await res.json();
+      try {
+        const res = await apiFetch("/ai/schedule", { method: "POST" });
+        const data = await res.json();
 
-      const safe = Array.isArray(data) ? data : data.schedule || [];
+        const safe = Array.isArray(data) ? data : data.schedule || [];
 
-      const parsed: ScheduledTask[] = safe.map((item: any, i: number) => ({
-        id: i,
-        title: item.title,
-        subject: item.subject || "General",
-        estimatedMinutes: item.duration || 60,
-        scheduledStart: item.start,
-        scheduledEnd: item.end,
-        priority: item.priority || "medium",
-        date: item.date,
-      }));
+        const parsed: ScheduledTask[] = safe.map((item: any, i: number) => ({
+          id: i,
+          title: item.title,
+          subject: item.subject || "General",
+          estimatedMinutes: item.duration || 60,
+          scheduledStart: item.start,
+          scheduledEnd: item.end,
+          priority: item.priority || "medium",
+          date: item.date,
+        }));
 
-      setTasks(parsed);
+        setTasks(parsed);
+      } catch (err) {
+        console.error("SCHEDULE ERROR:", err);
+      } finally {
+        setLoading(false);
+      }
     };
 
     fetchSchedule();
   }, []);
 
-  // 🔥 DETECT CURRENT TASK
+  // 🔥 DETECT TASK (FIXED — NO RESET)
   useEffect(() => {
-  const checkCurrentTask = () => {
-    const now = new Date();
+    const checkCurrentTask = () => {
+      if (!tasks.length) {
+        setTask(null);
+        return;
+      }
 
-    const currentTask = tasks.find((t) => {
-      if (!t.date) return false;
+      if (manualStop) return;
 
-      const taskDate = new Date(t.date);
-
-      if (
-        taskDate.getDate() !== now.getDate() ||
-        taskDate.getMonth() !== now.getMonth() ||
-        taskDate.getFullYear() !== now.getFullYear()
-      ) return false;
-
-      const [sh, sm] = t.scheduledStart.split(":").map(Number);
-      const [eh, em] = t.scheduledEnd.split(":").map(Number);
-
-      const start = sh * 60 + sm;
-      const end = eh * 60 + em;
-
+      const now = new Date();
       const nowMin = now.getHours() * 60 + now.getMinutes();
 
-      return nowMin >= start && nowMin < end;
-    });
+      let currentTask = tasks.find((t) => {
+        const [sh, sm] = t.scheduledStart.split(":").map(Number);
+        const [eh, em] = t.scheduledEnd.split(":").map(Number);
 
-    // 🔥 MANUAL MODE CHECK
-    if (manualStop) return;
+        const start = sh * 60 + sm;
+        const end = eh * 60 + em;
 
-    if (currentTask) {
+        return nowMin >= start && nowMin < end;
+      });
+
+      if (!currentTask) {
+        currentTask = tasks.find((t) => {
+          const [sh, sm] = t.scheduledStart.split(":").map(Number);
+          const start = sh * 60 + sm;
+          return start > nowMin;
+        });
+      }
+
+      if (!currentTask) {
+        currentTask = tasks[0];
+      }
+
       setTask(currentTask);
       setStatus("running");
 
-      const [sh, sm] = currentTask.scheduledStart.split(":").map(Number);
-      const startMin = sh * 60 + sm;
-      const nowMin = now.getHours() * 60 + now.getMinutes();
+      // 🔥 ONLY UPDATE ELAPSED IF TASK CHANGED
+      if (currentTask.id !== lastTaskId.current) {
+        lastTaskId.current = currentTask.id;
 
-      const seconds = (nowMin - startMin) * 60 + now.getSeconds();
-      setElapsed(seconds);
-    } else {
-      setTask(null);
-      setStatus("idle");
-      setElapsed(0);
-    }
-  };
+        const [sh, sm] = currentTask.scheduledStart.split(":").map(Number);
+        const startMin = sh * 60 + sm;
 
-  checkCurrentTask();
+        const seconds = Math.max(
+          0,
+          (nowMin - startMin) * 60 + now.getSeconds()
+        );
 
-  const interval = setInterval(checkCurrentTask, 10000);
+        setElapsed(seconds);
+      }
+    };
 
-  return () => clearInterval(interval);
-}, [tasks, manualStop]);
-  // 🔥 TIMER
+    checkCurrentTask();
+
+    const interval = setInterval(checkCurrentTask, 10000);
+
+    return () => clearInterval(interval);
+  }, [tasks, manualStop]);
+
+  // 🔥 TIMER LOOP
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
 
@@ -127,27 +172,44 @@ export default function StudyTimerPage() {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [status]);
+  }, [status, task]);
 
-  if (!task) {
-    return <div className="p-10 text-center">No active task</div>;
+  // 🔥 UI STATES
+  if (loading) {
+    return (
+      <div className="p-10 text-center">
+        ⏳ Loading your schedule...
+      </div>
+    );
+  }
+
+  if (!tasks.length) {
+    return (
+      <div className="p-10 text-center">
+        📭 No tasks yet
+      </div>
+    );
   }
 
   const { hours, minutes, seconds } = formatTime(elapsed);
 
-  const progress = Math.min(
-    100,
-    Math.round((elapsed / (task.estimatedMinutes * 60)) * 100)
-  );
+  const progress = task
+    ? Math.min(
+        100,
+        Math.round((elapsed / (task.estimatedMinutes * 60)) * 100)
+      )
+    : 0;
 
   return (
     <div className="p-8">
       <h1 className="text-3xl font-bold mb-6">Study Timer</h1>
 
-      <div className="bg-black text-white p-6 rounded-xl mb-6">
-        <h2>{task.title}</h2>
-        <p>{task.scheduledStart} - {task.scheduledEnd}</p>
-      </div>
+      {task && (
+        <div className="bg-black text-white p-6 rounded-xl mb-6">
+          <h2>{task.title}</h2>
+          <p>{task.scheduledStart} - {task.scheduledEnd}</p>
+        </div>
+      )}
 
       <div className="text-center text-4xl font-mono mb-4">
         {hours}:{minutes}:{seconds}
@@ -157,33 +219,42 @@ export default function StudyTimerPage() {
 
       <div className="flex justify-center gap-3 mt-4">
         <button
-  onClick={() => {
-    setStatus("running");
-    setManualStop(false); // 🔥 allow auto again
-  }}
-  className="bg-green-500 px-4 py-2 text-white rounded"
->
-  Start
-</button>
+          onClick={() => {
+            setStatus("running");
+            setManualStop(false);
+          }}
+          className="bg-green-500 px-4 py-2 text-white rounded"
+        >
+          Start
+        </button>
 
-<button
-  onClick={() => setStatus("paused")}
-  className="bg-yellow-500 px-4 py-2 text-white rounded"
->
-  Pause
-</button>
+        <button
+          onClick={() => {
+            setStatus("paused");
+            setManualStop(true);
+          }}
+          className="bg-yellow-500 px-4 py-2 text-white rounded"
+        >
+          Pause
+        </button>
 
-<button
-  onClick={() => {
-    setStatus("idle");
-    setManualStop(true); // 🔥 block auto restart
-    setElapsed(0); // 🔥 reset timer
-  }}
-  className="bg-red-500 px-4 py-2 text-white rounded"
->
-  Stop
-</button>
+        <button
+          onClick={() => {
+            setStatus("idle");
+            setManualStop(true);
+            setElapsed(0);
+          }}
+          className="bg-red-500 px-4 py-2 text-white rounded"
+        >
+          Stop
+        </button>
       </div>
+
+      <p className="text-center text-gray-400 mt-4">
+        {status === "running" && "▶ Running"}
+        {status === "paused" && "⏸ Paused"}
+        {status === "idle" && "⛔ Stopped"}
+      </p>
     </div>
   );
 }
