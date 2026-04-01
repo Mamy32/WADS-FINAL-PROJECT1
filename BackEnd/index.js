@@ -7,6 +7,7 @@ const taskRoutes = require("./routes/taskRoutes");
 const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
 const aiRoutes = require("./routes/ai");
+const sessionRoutes = require("./routes/sessionRoutes");
 const app = express();
 
 /* =========================
@@ -22,6 +23,7 @@ app.use("/auth", authRoutes);   // Firebase sync route
 app.use("/tasks", taskRoutes);
 app.use("/users", userRoutes);
 app.use("/ai", aiRoutes);
+app.use("/sessions", sessionRoutes);
 
 /* =========================
   TEST ROUTE

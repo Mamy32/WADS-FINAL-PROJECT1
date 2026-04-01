@@ -49,8 +49,9 @@ model StudySession {
   id        String   @id @default(uuid())
   startTime DateTime
   endTime   DateTime
-  energy    String
-
+  duration  Int      // ADD THIS (minutes)
+  taskId    String?  //optional link to task
   userId    String
   user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
 }

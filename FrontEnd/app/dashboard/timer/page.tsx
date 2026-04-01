@@ -200,6 +200,20 @@ export default function StudyTimerPage() {
       )
     : 0;
 
+  const saveSession = async () => {
+  try {
+    await apiFetch("/sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        duration: Math.floor(elapsed / 60), // minutes
+        taskId: task?.id || null,
+      }),
+    });
+  } catch (err) {
+    console.error("SESSION SAVE ERROR:", err);
+  }
+};
+
   return (
     <div className="p-8">
       <h1 className="text-3xl font-bold mb-6">Study Timer</h1>
@@ -240,6 +254,7 @@ export default function StudyTimerPage() {
 
         <button
           onClick={() => {
+            saveSession(); // 🔥 ADD THIS
             setStatus("idle");
             setManualStop(true);
             setElapsed(0);
