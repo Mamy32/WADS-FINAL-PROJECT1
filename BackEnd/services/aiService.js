@@ -1,65 +1,85 @@
+const OpenAI = require("openai");
+
+// 🔥 PRIMARY MODEL (GLM)
+const nvidia = new OpenAI({
+  apiKey: process.env.FALLBACK_API_KEY,
+  baseURL: "https://integrate.api.nvidia.com/v1",
+});
+
+
+// 🔥 SAME CLIENT (we just switch model)
+const NVIDIA_MODELS = {
+  fallback: "qwen/qwen3.5-122b-a10b", 
+};
+
+// 🔥 OPENROUTER (LAST FALLBACK)
 const fetch = (...args) =>
   import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
-async function callOpenRouter(prompt) {
+async function callAI(prompt) {
+  // ===============================
+  // 🔥 2. TRY QWEN MODEL
+  // ===============================
   try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "liquid/lfm-2.5-1.2b-instruct:free",
-        temperature: 0.2,
-        messages: [
-          {
-            role: "system",
-            content: "You are a strict API. Return ONLY valid JSON. No explanation.",
-          },
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-      }),
+    const res = await nvidia.chat.completions.create({
+      model: NVIDIA_MODELS.fallback,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a strict API. Return ONLY valid JSON. No explanation.",
+        },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 1000,
     });
+
+    const text = res.choices?.[0]?.message?.content;
+    if (!text) throw new Error("Empty QWEN response");
+
+    return cleanJSON(text);
+
+  } catch (err) {
+    console.warn("⚠️ QWEN FAILED → fallback to OpenRouter...");
+  }
+
+  // ===============================
+  // 🔥 3. OPENROUTER (LAST RESORT)
+  // ===============================
+  try {
+    const response = await fetch(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "arcee-ai/trinity-large-preview:free",
+          temperature: 0.2,
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are a strict API. Return ONLY valid JSON. No explanation.",
+            },
+            { role: "user", content: prompt },
+          ],
+        }),
+      }
+    );
 
     const data = await response.json();
 
-    // 🔥 HANDLE API ERROR
-    if (!response.ok) {
-      console.error("OPENROUTER ERROR:", data);
-      return [];
-    }
+    const text = data?.choices?.[0]?.message?.content;
+    if (!text) return [];
 
-    let text = data?.choices?.[0]?.message?.content;
-
-    if (!text) {
-      console.error("EMPTY AI RESPONSE:", data);
-      return [];
-    }
-
-    // 🔥 CLEAN JSON
-    const start = text.indexOf("[");
-    const end = text.lastIndexOf("]") + 1;
-
-    if (start === -1 || end === -1) {
-      console.error("INVALID JSON FORMAT:", text);
-      return [];
-    }
-
-    const clean = text.slice(start, end);
-
-    try {
-      return JSON.parse(clean); // ✅ ONLY PARSE ONCE
-    } catch (err) {
-      console.error("JSON PARSE ERROR:", clean);
-      return [];
-    }
+    return cleanJSON(text);
 
   } catch (err) {
-    console.error("AI ERROR:", err);
+    console.error("❌ ALL AI FAILED:", err);
     return [];
   }
 }
@@ -107,7 +127,7 @@ Tasks:
 ${JSON.stringify(cleanTasks)}
 `;
 
-    const ai = await callOpenRouter(prompt);
+    const ai = await callAI(prompt);
 
     if (!Array.isArray(ai)) {
       console.error("INVALID AI RESPONSE:", ai);

@@ -213,63 +213,96 @@ export default function StudyTimerPage() {
     console.error("SESSION SAVE ERROR:", err);
   }
 };
+function formatTimeAMPM(time?: string) {
+  if (!time) return "";
 
-  return (
-    <div className="p-8">
-      <h1 className="text-3xl font-bold mb-6">Study Timer</h1>
+  const [h, m] = time.split(":").map(Number);
+  const date = new Date();
+  date.setHours(h, m);
 
-      {task && (
-        <div className="bg-black text-white p-6 rounded-xl mb-6">
-          <h2>{task.title}</h2>
-          <p>{task.scheduledStart} - {task.scheduledEnd}</p>
-        </div>
-      )}
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
 
-      <div className="text-center text-4xl font-mono mb-4">
-        {hours}:{minutes}:{seconds}
+return (
+  <div className="p-8">
+    <h1 className="text-3xl font-bold mb-6">Study Timer</h1>
+
+    {/* 🔥 LOADING STATE */}
+    {!task ? (
+      <div className="text-center text-gray-400 mb-6">
+        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-400 mx-auto mb-2"></div>
+        Loading task...
       </div>
-
-      <p className="text-center">{progress}% progress</p>
-
-      <div className="flex justify-center gap-3 mt-4">
-        <button
-          onClick={() => {
-            setStatus("running");
-            setManualStop(false);
-          }}
-          className="bg-green-500 px-4 py-2 text-white rounded"
-        >
-          Start
-        </button>
-
-        <button
-          onClick={() => {
-            setStatus("paused");
-            setManualStop(true);
-          }}
-          className="bg-yellow-500 px-4 py-2 text-white rounded"
-        >
-          Pause
-        </button>
-
-        <button
-          onClick={() => {
-            saveSession(); // 🔥 ADD THIS
-            setStatus("idle");
-            setManualStop(true);
-            setElapsed(0);
-          }}
-          className="bg-red-500 px-4 py-2 text-white rounded"
-        >
-          Stop
-        </button>
+    ) : (
+      <div className="bg-black text-white p-6 rounded-xl mb-6">
+        <h2 className="text-lg font-semibold">{task.title}</h2>
+        <p className="text-sm text-gray-300">
+          {formatTimeAMPM(task.scheduledStart)} -{" "}
+          {formatTimeAMPM(task.scheduledEnd)}
+        </p>
       </div>
+    )}
 
-      <p className="text-center text-gray-400 mt-4">
-        {status === "running" && "▶ Running"}
-        {status === "paused" && "⏸ Paused"}
-        {status === "idle" && "⛔ Stopped"}
-      </p>
+    {/* 🔥 TIMER */}
+    <div className="text-center text-4xl font-mono mb-4">
+      {hours}:{minutes}:{seconds}
     </div>
-  );
+
+    {/* 🔥 PROGRESS */}
+    <p className="text-center mb-2">{progress}% progress</p>
+
+    <div className="w-full max-w-md mx-auto bg-gray-200 rounded-full h-2 mb-4">
+      <div
+        className="bg-green-500 h-2 rounded-full transition-all"
+        style={{ width: `${progress}%` }}
+      />
+    </div>
+
+    {/* 🔥 BUTTONS */}
+    <div className="flex justify-center gap-3 mt-4">
+      <button
+        onClick={() => {
+          setStatus("running");
+          setManualStop(false);
+        }}
+        className="bg-green-500 px-4 py-2 text-white rounded"
+      >
+        Start
+      </button>
+
+      <button
+        onClick={() => {
+          setStatus("paused");
+          setManualStop(true);
+        }}
+        className="bg-yellow-500 px-4 py-2 text-white rounded"
+      >
+        Pause
+      </button>
+
+      <button
+        onClick={() => {
+          saveSession();
+          setStatus("idle");
+          setManualStop(true);
+          setElapsed(0);
+        }}
+        className="bg-red-500 px-4 py-2 text-white rounded"
+      >
+        Stop
+      </button>
+    </div>
+
+    {/* 🔥 STATUS */}
+    <p className="text-center text-gray-400 mt-4">
+      {status === "running" && "▶ Running"}
+      {status === "paused" && "⏸ Paused"}
+      {status === "idle" && "⛔ Stopped"}
+    </p>
+  </div>
+);
 }
